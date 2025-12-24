@@ -1072,9 +1072,10 @@ class Game {
         this.soundManager = new SoundManager();
         this.minimap = new MiniMap('minimap', this);
         this.particles = new ParticleSystem(this.scene);
-        this.sentinel = new Sentinel(this.scene, this.camera, this.soundManager);
-        this.creeper = new Creeper(this.scene, this.camera, this.soundManager);
-        this.crim = new Crim(this.scene, this.camera, this.soundManager);
+        // Characters moved to loadCity to support level switching
+        this.sentinel = null;
+        this.creeper = null;
+        this.crim = null;
 
         window.addEventListener('sentinel-attack', () => {
             this.score = Math.max(0, this.score - 50);
@@ -1142,6 +1143,7 @@ class Game {
 
         this.overlay = document.getElementById('transition-overlay');
         this.currentLevel = 'CITY';
+        this.currentLevel = 'CITY';
         this.isTransitioning = false;
 
         // Initial City Load
@@ -1152,6 +1154,50 @@ class Game {
         window.addEventListener('keyup', (e) => this.onKeyUp(e));
 
         this.animate();
+    }
+
+    clearScene() {
+        while (this.scene.children.length > 0) {
+            this.scene.remove(this.scene.children[0]);
+        }
+        this.collidableObjects = [];
+        this.shards = [];
+        this.collisionBoxes = [];
+        this.sentinel = null;
+        this.creeper = null;
+        this.crim = null;
+        this.cellarLocation = null;
+    }
+
+    switchLevel(targetLevel) {
+        if (this.isTransitioning) return;
+        this.isTransitioning = true;
+        this.overlay.classList.add('active'); // Fade to black
+
+        setTimeout(() => {
+            this.clearScene();
+
+            if (targetLevel === 'CELLAR') {
+                this.loadCellar();
+                // Spawn player
+                this.camera.position.set(0, 1, 5);
+                this.camera.lookAt(0, 1, 0);
+            } else if (targetLevel === 'CITY') {
+                this.loadCity();
+                // Spawn player back near cellar
+                this.camera.position.set(30, 1, 40);
+                this.camera.lookAt(30, 1, 30);
+            }
+
+            this.currentLevel = targetLevel;
+
+            // Fade In
+            setTimeout(() => {
+                this.overlay.classList.remove('active');
+                this.isTransitioning = false;
+            }, 100);
+
+        }, 1000); // Wait for fade out
     }
 
     createSky() {
@@ -1293,6 +1339,13 @@ class Game {
         }
         this.addLandmarks();
         this.addCellar();
+        this.createSpire();
+        this.createCrystal();
+
+        // Spawn City Characters
+        this.sentinel = new Sentinel(this.scene, this.camera, this.soundManager);
+        this.creeper = new Creeper(this.scene, this.camera, this.soundManager);
+        this.crim = new Crim(this.scene, this.camera, this.soundManager);
         this.computeStaticCollisionBoxes();
     }
 
@@ -1345,8 +1398,9 @@ class Game {
         this.scene.add(building);
         this.collidableObjects.push(building);
 
-        // Store for minimap
-        this.cellarLocation = new THREE.Vector3(x, 0, z);
+        // Store for minimap and interaction (Door location)
+        // Building is at (x, z), limits are +/- size/2. Door is at +z face.
+        this.cellarLocation = new THREE.Vector3(x, 0, z + size / 2 + 2); // Slightly in front of door
 
         const doorGeo = new THREE.PlaneGeometry(5, 8);
         const doorMat = new THREE.MeshStandardMaterial({
@@ -1808,12 +1862,28 @@ class Game {
 
         if (this.isSessionStarted) {
             this.minimap.update();
-            this.sentinel.update(delta, this);
-            this.creeper.update(delta, this);
-            this.crim.update(delta, this);
+            if (this.sentinel) this.sentinel.update(delta, this);
+            if (this.creeper) this.creeper.update(delta, this);
+            if (this.crim) this.crim.update(delta, this);
 
             // Unstuck logic
             this.resolveCollision();
+
+            // Check Cellar Entry
+            if (this.currentLevel === 'CITY' && this.cellarLocation) {
+                const dist = this.camera.position.distanceTo(this.cellarLocation);
+                if (dist < 4.0) {
+                    this.switchLevel('CELLAR');
+                }
+            }
+
+            // Check Cellar Exit
+            if (this.currentLevel === 'CELLAR' && this.cellarExit) {
+                const dist = this.camera.position.distanceTo(this.cellarExit);
+                if (dist < 2.0) {
+                    this.switchLevel('CITY');
+                }
+            }
         }
 
         if (this.spire) {
