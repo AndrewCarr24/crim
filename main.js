@@ -17,11 +17,23 @@ class SoundManager {
         this.tempo = 140;
         this.lookahead = 25.0;
         this.scheduleAheadTime = 0.1;
+        this.currentTrack = 'CITY';
+    }
+
+    setTrack(trackName) {
+        if (this.currentTrack === trackName) return;
+        console.log(`Switching track to ${trackName}`);
+        this.currentTrack = trackName;
+        if (trackName === 'CELLAR') {
+            this.tempo = 90; // Slower for Reggae
+        } else {
+            this.tempo = 140; // Faster for Horrorcore
+        }
     }
 
     startMusic() {
         if (this.isPlaying) return;
-        console.log('Starting Horrorcore Soundtrack...');
+        console.log('Starting Soundtrack...');
         if (this.ctx.state === 'suspended') {
             this.ctx.resume().then(() => {
                 console.log('AudioContext resumed');
@@ -40,7 +52,11 @@ class SoundManager {
     scheduler() {
         if (!this.isPlaying) return;
         while (this.nextNoteTime < this.ctx.currentTime + this.scheduleAheadTime) {
-            this.scheduleNote(this.current16thNote, this.nextNoteTime);
+            if (this.currentTrack === 'CITY') {
+                this.scheduleNote(this.current16thNote, this.nextNoteTime);
+            } else {
+                this.scheduleReggae(this.current16thNote, this.nextNoteTime);
+            }
             this.nextStep();
         }
         this.timerID = setTimeout(() => this.scheduler(), this.lookahead);
@@ -71,6 +87,99 @@ class SoundManager {
         if (beatNumber === 0 && Math.random() < 0.3) {
             this.playScreech(time);
         }
+    }
+
+    scheduleReggae(beatNumber, time) {
+        // One Drop Rhythm (Kick on 3)
+        // 16th notes: 1=0, 2=4, 3=8, 4=12
+
+        // Kick & Sidestick on Beat 3 (One Drop)
+        if (beatNumber === 8) {
+            this.playKick(time);
+            this.playRimshot(time);
+        }
+
+        // HiHats (Shuffled/Straight 8ths)
+        if (beatNumber % 2 === 0) {
+            this.playHat(time, 0.1); // Closed
+        }
+
+        // The Skank (Chords on 2 and 4)
+        if (beatNumber === 4 || beatNumber === 12) {
+            this.playReggaeChop(time);
+        }
+
+        // Dub Bass (Syncopated)
+        // Simple bass pattern
+        if (beatNumber === 0 || beatNumber === 10 || (beatNumber === 14 && Math.random() < 0.5)) {
+            this.playDubBass(time);
+        }
+    }
+
+    playRimshot(time) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.frequency.setValueAtTime(400, time);
+        gain.gain.setValueAtTime(0.5, time);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(time);
+        osc.stop(time + 0.05);
+    }
+
+    playReggaeChop(time) {
+        // Quick, filtered saw chord
+        const osc1 = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const osc3 = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+
+        osc1.type = 'sawtooth';
+        osc2.type = 'sawtooth';
+        osc3.type = 'sawtooth';
+
+        // G Minorish chord
+        osc1.frequency.value = 392.00; // G4
+        osc2.frequency.value = 466.16; // Bb4
+        osc3.frequency.value = 587.33; // D5
+
+        filter.type = 'highpass';
+        filter.frequency.value = 800;
+
+        gain.gain.setValueAtTime(0.4, time);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
+
+        osc1.connect(filter);
+        osc2.connect(filter);
+        osc3.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc1.start(time);
+        osc2.start(time);
+        osc3.start(time);
+        osc1.stop(time + 0.1);
+        osc2.stop(time + 0.1);
+        osc3.stop(time + 0.1);
+    }
+
+    playDubBass(time) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(98.00, time); // G2
+
+        gain.gain.setValueAtTime(0.8, time);
+        gain.gain.linearRampToValueAtTime(0.6, time + 0.1);
+        gain.gain.linearRampToValueAtTime(0.01, time + 0.4);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(time);
+        osc.stop(time + 0.4);
     }
 
     playKick(time) {
@@ -1059,7 +1168,8 @@ class Game {
         this.textures = {
             brick: textureLoader.load('brick_facade.png'),
             glass: textureLoader.load('glass_facade.png'),
-            asphalt: textureLoader.load('asphalt.png')
+            asphalt: textureLoader.load('asphalt.png'),
+            cellarDoor: textureLoader.load('cellar_door.png')
         };
         this.textures.brick.wrapS = this.textures.brick.wrapT = THREE.RepeatWrapping;
         this.textures.glass.wrapS = this.textures.glass.wrapT = THREE.RepeatWrapping;
@@ -1132,15 +1242,6 @@ class Game {
         );
         this.composer.addPass(bloomPass);
 
-        this.createSky();
-
-        const ambientLight = new THREE.AmbientLight(0x404040, 2);
-        this.scene.add(ambientLight);
-
-        const pointLight = new THREE.PointLight(0x00f2fe, 10, 100);
-        pointLight.position.set(0, 20, 0);
-        this.scene.add(pointLight);
-
         this.overlay = document.getElementById('transition-overlay');
         this.currentLevel = 'CITY';
         this.currentLevel = 'CITY';
@@ -1167,6 +1268,7 @@ class Game {
         this.creeper = null;
         this.crim = null;
         this.cellarLocation = null;
+        this.cellarExit = null;
     }
 
     switchLevel(targetLevel) {
@@ -1175,21 +1277,31 @@ class Game {
         this.overlay.classList.add('active'); // Fade to black
 
         setTimeout(() => {
-            this.clearScene();
+            try {
+                this.clearScene();
 
-            if (targetLevel === 'CELLAR') {
-                this.loadCellar();
-                // Spawn player
-                this.camera.position.set(0, 1, 5);
-                this.camera.lookAt(0, 1, 0);
-            } else if (targetLevel === 'CITY') {
-                this.loadCity();
-                // Spawn player back near cellar
-                this.camera.position.set(30, 1, 40);
-                this.camera.lookAt(30, 1, 30);
+                if (targetLevel === 'CELLAR') {
+                    console.log('Loading Cellar...');
+                    this.soundManager.setTrack('CELLAR');
+                    this.loadCellar();
+                    // Spawn player
+                    this.camera.position.set(0, 1, 5);
+                    this.camera.lookAt(0, 1, 0);
+                } else if (targetLevel === 'CITY') {
+                    console.log('Loading City...');
+                    this.soundManager.setTrack('CITY');
+                    this.loadCity();
+                    // Spawn player back near cellar (but outside trigger radius)
+                    this.camera.position.set(30, 1, 48);
+                    this.camera.lookAt(30, 1, 30);
+                }
+
+                console.log(`Switched to ${targetLevel}`);
+                this.currentLevel = targetLevel;
+
+            } catch (error) {
+                console.error('Error switching level:', error);
             }
-
-            this.currentLevel = targetLevel;
 
             // Fade In
             setTimeout(() => {
@@ -1290,6 +1402,14 @@ class Game {
 
         this.createSky();
 
+        // City Lights
+        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        this.scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0x00f2fe, 10, 100);
+        pointLight.position.set(0, 20, 0);
+        this.scene.add(pointLight);
+
         const groundGeo = new THREE.PlaneGeometry(citySize, citySize);
         const groundMat = new THREE.MeshStandardMaterial({
             map: this.textures.asphalt,
@@ -1356,7 +1476,7 @@ class Game {
         const size = 20;
 
         // Ensure we load the texture
-        const doorTexture = new THREE.TextureLoader(this.loadingManager).load('cellar_door.png');
+        const doorTexture = this.textures.cellarDoor;
 
         // Procedural Sign Texture
         const signCanvas = document.createElement('canvas');
@@ -1495,6 +1615,7 @@ class Game {
         exit.position.set(0, 2, 9.4);
         this.scene.add(exit);
         this.cellarExit = exit.position;
+        console.log('Cellar Exit set at:', this.cellarExit);
 
         // Lights
         const ambient = new THREE.AmbientLight(0xff00ff, 0.5);
@@ -1881,6 +2002,7 @@ class Game {
             if (this.currentLevel === 'CELLAR' && this.cellarExit) {
                 const dist = this.camera.position.distanceTo(this.cellarExit);
                 if (dist < 2.0) {
+                    console.log('Triggering City Exit from Cellar. Dist:', dist);
                     this.switchLevel('CITY');
                 }
             }
