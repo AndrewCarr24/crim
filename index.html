@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Crystal - Browser Game</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+        {
+          "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+          }
+        }
+    </script>
+</head>
+
+<body>
+  <div id="start-screen">
+    <div class="glass-panel">
+      <img src="logo.png" alt="AI Crystal Logo" class="logo">
+      <h1>AI CRYSTAL</h1>
+      <p>Explore the stylized digital world of Durham.</p>
+      <button id="start-button">START SESSION</button>
+      <div id="instructions">
+        <span>WASD</span> Move | <span>MOUSE</span> Look | <span>ESC</span> Unlock
+      </div>
+    </div>
+  </div>
+
+  <div id="dashboard" class="hidden">
+    <div class="stat-box glass-panel">
+      <span class="label">ENERGY</span>
+      <span id="score" class="value">000</span>
+    </div>
+    <div id="mission-box" class="stat-box glass-panel">
+      <span class="label">ACTIVE MISSION</span>
+      <span id="mission-text" class="value" style="font-size: 0.9rem; white-space: nowrap;">COLLECT ENERGETIC
+        SHARDS</span>
+    </div>
+    <div class="stat-box glass-panel">
+      <span class="label">LATENCY</span>
+      <span id="latency" class="value">12ms</span>
+    </div>
+    <div id="minimap-container" class="glass-panel">
+      <canvas id="minimap"></canvas>
+    </div>
+  </div>
+
+  <div id="victory-screen" class="hidden no-pointer">
+    <div class="glass-panel">
+      <h1>SESSION COMPLETE</h1>
+      <p>All energetic shards have been collected.</p>
+      <div id="final-stats">
+        <span class="label">FINAL ENERGY</span>
+        <span id="final-score" class="value">000</span>
+      </div>
+      <button id="reboot-button">REBOOT SESSION</button>
+    </div>
+  </div>
+
+  <canvas id="game-canvas"></canvas>
+  <script type="module" src="main.js"></script>
+</body>
+
+</html>
