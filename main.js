@@ -399,6 +399,16 @@ class MiniMap {
         ctx.moveTo(centerX, centerY);
         ctx.lineTo(centerX + dir.x * 10, centerY + dir.z * 10);
         ctx.stroke();
+
+        // Draw Cellar (Purple Square)
+        if (game.cellarLocation) {
+            ctx.fillStyle = '#a020f0'; // Purple
+            const rx = (game.cellarLocation.x - game.camera.position.x) * zoom;
+            const rz = (game.cellarLocation.z - game.camera.position.z) * zoom;
+            ctx.fillRect(centerX + rx - 3, centerY + rz - 3, 6, 6);
+
+            // Label ? Too small. Just a distinct color.
+        }
     }
 }
 
@@ -1044,6 +1054,17 @@ class Game {
         this.footstepTimer = 0;
 
         this.loadingManager = new THREE.LoadingManager();
+
+        const textureLoader = new THREE.TextureLoader(this.loadingManager);
+        this.textures = {
+            brick: textureLoader.load('brick_facade.png'),
+            glass: textureLoader.load('glass_facade.png'),
+            asphalt: textureLoader.load('asphalt.png')
+        };
+        this.textures.brick.wrapS = this.textures.brick.wrapT = THREE.RepeatWrapping;
+        this.textures.glass.wrapS = this.textures.glass.wrapT = THREE.RepeatWrapping;
+        this.textures.asphalt.wrapS = this.textures.asphalt.wrapT = THREE.RepeatWrapping;
+        this.textures.asphalt.repeat.set(50, 50);
         this.loadingManager.onLoad = () => {
             console.log('Textures loaded');
         };
@@ -1119,9 +1140,12 @@ class Game {
         pointLight.position.set(0, 20, 0);
         this.scene.add(pointLight);
 
-        this.createCity();
-        this.createCrystal();
-        this.createSpire();
+        this.overlay = document.getElementById('transition-overlay');
+        this.currentLevel = 'CITY';
+        this.isTransitioning = false;
+
+        // Initial City Load
+        this.loadCity();
 
         window.addEventListener('resize', () => this.onResize());
         window.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -1208,21 +1232,17 @@ class Game {
         }
     }
 
-    createCity() {
+
+
+    loadCity() {
         const citySize = 200;
         const blockSize = 20;
 
-        const textureLoader = new THREE.TextureLoader(this.loadingManager);
-        this.textures = {
-            brick: textureLoader.load('brick_facade.png'),
-            glass: textureLoader.load('glass_facade.png'),
-            asphalt: textureLoader.load('asphalt.png')
-        };
+        this.currentLevel = 'CITY';
+        this.scene.background = new THREE.Color(0x000000);
+        this.scene.fog = new THREE.FogExp2(0x000510, 0.02);
 
-        this.textures.brick.wrapS = this.textures.brick.wrapT = THREE.RepeatWrapping;
-        this.textures.glass.wrapS = this.textures.glass.wrapT = THREE.RepeatWrapping;
-        this.textures.asphalt.wrapS = this.textures.asphalt.wrapT = THREE.RepeatWrapping;
-        this.textures.asphalt.repeat.set(50, 50);
+        this.createSky();
 
         const groundGeo = new THREE.PlaneGeometry(citySize, citySize);
         const groundMat = new THREE.MeshStandardMaterial({
@@ -1272,8 +1292,239 @@ class Game {
             }
         }
         this.addLandmarks();
+        this.addCellar();
         this.computeStaticCollisionBoxes();
     }
+
+    addCellar() {
+        // Find a spot: Fixed location to ensure it spawns
+        const x = 30;
+        const z = 30;
+        const size = 20;
+
+        // Ensure we load the texture
+        const doorTexture = new THREE.TextureLoader(this.loadingManager).load('cellar_door.png');
+
+        // Procedural Sign Texture
+        const signCanvas = document.createElement('canvas');
+        signCanvas.width = 512;
+        signCanvas.height = 128;
+        const ctx = signCanvas.getContext('2d');
+
+        // Dark Oak Background
+        ctx.fillStyle = '#3e2723';
+        ctx.fillRect(0, 0, 512, 128);
+
+        // Wood grain
+        ctx.strokeStyle = '#281a14';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 50; i++) {
+            ctx.beginPath();
+            ctx.moveTo(0, Math.random() * 128);
+            ctx.bezierCurveTo(100, Math.random() * 128, 400, Math.random() * 128, 512, Math.random() * 128);
+            ctx.stroke();
+        }
+
+        // Text
+        ctx.fillStyle = '#eaddcf'; // Bone white
+        ctx.font = 'bold italic 60px "Times New Roman", serif'; // Fancy-ish
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = '#000';
+        ctx.shadowBlur = 10;
+        ctx.fillText('The Cellar', 256, 64);
+
+        const signTexture = new THREE.CanvasTexture(signCanvas);
+
+        // Building
+        const height = 12;
+        const geo = new THREE.BoxGeometry(size, height, size);
+        const mat = new THREE.MeshPhongMaterial({ map: this.textures.brick }); // Base brick
+        const building = new THREE.Mesh(geo, mat);
+        building.position.set(x, height / 2 - 1, z);
+        this.scene.add(building);
+        this.collidableObjects.push(building);
+
+        // Store for minimap
+        this.cellarLocation = new THREE.Vector3(x, 0, z);
+
+        const doorGeo = new THREE.PlaneGeometry(5, 8);
+        const doorMat = new THREE.MeshStandardMaterial({
+            map: doorTexture,
+            transparent: true,
+            side: THREE.DoubleSide
+        });
+        const door = new THREE.Mesh(doorGeo, doorMat);
+        // Position on South face
+        door.position.set(0, -height / 2 + 4 + 0.1, size / 2 + 0.1);
+        building.add(door);
+
+        // Sign (Above door)
+        const signGeo = new THREE.BoxGeometry(8, 2, 0.5);
+        const signMat = new THREE.MeshStandardMaterial({ map: signTexture });
+        const sign = new THREE.Mesh(signGeo, signMat);
+        sign.position.set(0, -height / 2 + 9, size / 2 + 0.25);
+        building.add(sign);
+
+        // Spotlight on sign
+        const spot = new THREE.SpotLight(0xffaa00, 5, 20, 0.5, 0.5, 1);
+        spot.position.set(0, -height / 2 + 12, size / 2 + 5);
+        spot.target = sign;
+        building.add(spot);
+        building.add(spot.target);
+    }
+
+    loadCellar() {
+        this.scene.background = new THREE.Color(0x220033); // Dark Purple
+        this.scene.fog = new THREE.FogExp2(0xcc00ff, 0.05); // Pink fog
+
+        // Checkerboard Floor
+        const floorGeo = new THREE.PlaneGeometry(20, 20);
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 128, 128);
+        ctx.fillStyle = '#ff00ff'; ctx.fillRect(0, 0, 64, 64); ctx.fillRect(64, 64, 64, 64);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(10, 10);
+        tex.magFilter = THREE.NearestFilter;
+
+        const floorMat = new THREE.MeshPhongMaterial({ map: tex });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        this.scene.add(floor);
+
+        // Ceiling
+        const ceil = floor.clone();
+        ceil.position.y = 4;
+        ceil.rotation.x = Math.PI / 2;
+        this.scene.add(ceil);
+
+        // Walls
+        const wallGeo = new THREE.BoxGeometry(20, 4, 1);
+        const wallMat = new THREE.MeshPhongMaterial({ color: 0x00ffff, shininess: 100 });
+
+        const backWall = new THREE.Mesh(wallGeo, wallMat);
+        backWall.position.set(0, 2, -10);
+        this.scene.add(backWall);
+        this.collidableObjects.push(backWall);
+
+        const frontWall = new THREE.Mesh(wallGeo, wallMat);
+        frontWall.position.set(0, 2, 10);
+        this.scene.add(frontWall);
+        this.collidableObjects.push(frontWall);
+
+        const sideWallGeo = new THREE.BoxGeometry(1, 4, 20);
+        const leftWall = new THREE.Mesh(sideWallGeo, wallMat);
+        leftWall.position.set(-10, 2, 0);
+        this.scene.add(leftWall);
+        this.collidableObjects.push(leftWall);
+
+        const rightWall = new THREE.Mesh(sideWallGeo, wallMat);
+        rightWall.position.set(10, 2, 0);
+        this.scene.add(rightWall);
+        this.collidableObjects.push(rightWall);
+
+        // Bar
+        const barGeo = new THREE.BoxGeometry(8, 1.2, 1.5);
+        const barMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+        const bar = new THREE.Mesh(barGeo, barMat);
+        bar.position.set(0, 0.6, -6);
+        this.scene.add(bar);
+        this.collidableObjects.push(bar);
+
+        // Exit Door
+        const exitGeo = new THREE.BoxGeometry(2, 4, 0.2);
+        const exitMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const exit = new THREE.Mesh(exitGeo, exitMat);
+        exit.position.set(0, 2, 9.4);
+        this.scene.add(exit);
+        this.cellarExit = exit.position;
+
+        // Lights
+        const ambient = new THREE.AmbientLight(0xff00ff, 0.5);
+        this.scene.add(ambient);
+
+        const point = new THREE.PointLight(0x00ffff, 1, 15);
+        point.position.set(0, 3, 0);
+        this.scene.add(point);
+
+        // NPCs
+        this.spawnStonerLizard(2, 0, -4);
+        this.spawnSmokerCheetah(-3, 0, -5);
+
+        this.computeStaticCollisionBoxes();
+    }
+
+    spawnStonerLizard(x, y, z) {
+        const group = new THREE.Group();
+        group.position.set(x, y, z);
+
+        // Body
+        const bodyGeo = new THREE.CylinderGeometry(0.3, 0.4, 0.8);
+        const bodyMat = new THREE.MeshPhongMaterial({ color: 0x00aa00 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.4;
+        group.add(body);
+
+        // Head
+        const headGeo = new THREE.ConeGeometry(0.3, 0.6, 8);
+        const head = new THREE.Mesh(headGeo, bodyMat);
+        head.rotation.x = -Math.PI / 2;
+        head.position.y = 1.0;
+        head.position.z = 0.2;
+        group.add(head);
+
+        // Eyes (Red/Stoned)
+        const eyeGeo = new THREE.SphereGeometry(0.08);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+        leftEye.position.set(0.15, 1.1, 0.3);
+        group.add(leftEye);
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+        rightEye.position.set(-0.15, 1.1, 0.3);
+        group.add(rightEye);
+
+        this.scene.add(group);
+    }
+
+    spawnSmokerCheetah(x, y, z) {
+        const group = new THREE.Group();
+        group.position.set(x, y, z);
+
+        // Body (Yellow with spots procedurally?) 
+        // Simple for now: Orange
+        const bodyGeo = new THREE.BoxGeometry(0.5, 1.4, 0.3);
+        const bodyMat = new THREE.MeshPhongMaterial({ color: 0xffaa00 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.7;
+        group.add(body);
+
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+        const head = new THREE.Mesh(headGeo, bodyMat);
+        head.position.y = 1.6;
+        group.add(head);
+
+        // Cigarette
+        const cigGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.2);
+        const cigMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const cig = new THREE.Mesh(cigGeo, cigMat);
+        cig.rotation.x = Math.PI / 2;
+        cig.position.set(0.1, 1.5, 0.3);
+        group.add(cig);
+
+        // Ember
+        const emberGeo = new THREE.SphereGeometry(0.025);
+        const emberMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+        const ember = new THREE.Mesh(emberGeo, emberMat);
+        ember.position.set(0.0, 0.1, 0);
+        cig.add(ember);
+
+        this.scene.add(group);
+    }
+
 
     addBuildingBlock(x, z, blockSize) {
         const isModern = Math.random() > 0.6;

@@ -214,3 +214,20 @@ h1 {
     box-shadow: 0 0 20px var(--primary);
     transform: scale(1.05);
 }
+#transition-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: black;
+    z-index: 2000;
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+    pointer-events: none;
+}
+
+#transition-overlay.active {
+    opacity: 1;
+    pointer-events: all;
+}
