@@ -5,6 +5,28 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+// Seeded random number generator (mulberry32)
+class SeededRandom {
+    constructor(seed = 12345) {
+        this.seed = seed;
+        this.state = seed;
+    }
+
+    reset() {
+        this.state = this.seed;
+    }
+
+    random() {
+        let t = this.state += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+
+// Global seeded random for city generation
+const cityRandom = new SeededRandom(42069);
+
 class SoundManager {
     constructor() {
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -27,6 +49,8 @@ class SoundManager {
         this.currentTrack = trackName;
         if (trackName === 'CELLAR') {
             this.tempo = 90; // Slower for Reggae
+        } else if (trackName === 'SHELTER') {
+            this.tempo = 50; // Very slow for Gregorian chants
         } else {
             this.tempo = 140; // Faster for Horrorcore
         }
@@ -55,6 +79,8 @@ class SoundManager {
         while (this.nextNoteTime < this.ctx.currentTime + this.scheduleAheadTime) {
             if (this.currentTrack === 'CITY') {
                 this.scheduleNote(this.current16thNote, this.nextNoteTime);
+            } else if (this.currentTrack === 'SHELTER') {
+                this.scheduleGregorian(this.current16thNote, this.nextNoteTime);
             } else {
                 this.scheduleReggae(this.current16thNote, this.nextNoteTime);
             }
@@ -88,6 +114,83 @@ class SoundManager {
         if (beatNumber === 0 && Math.random() < 0.3) {
             this.playScreech(time);
         }
+    }
+
+    scheduleGregorian(beatNumber, time) {
+        // Gregorian chant - slow, sustained tones in modal harmony
+        // Only trigger on certain beats for long sustained notes
+
+        // Primary drone note (continuous bass)
+        if (beatNumber === 0) {
+            this.playChantDrone(time);
+        }
+
+        // Chant melody (slow moving)
+        if (beatNumber === 0 || beatNumber === 8) {
+            this.playChantVoice(time, this.getChantNote());
+        }
+
+        // Harmony voice (parallel motion)
+        if (beatNumber === 4 || beatNumber === 12) {
+            if (Math.random() < 0.7) {
+                this.playChantVoice(time, this.getChantNote() * 1.25); // Perfect 4th
+            }
+        }
+    }
+
+    getChantNote() {
+        // Dorian mode notes around D
+        const notes = [146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 261.63]; // D3-D4
+        return notes[Math.floor(Math.random() * notes.length)];
+    }
+
+    playChantDrone(time) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.value = 73.42; // D2 - low drone
+
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.3, time + 0.5);
+        gain.gain.linearRampToValueAtTime(0.3, time + 2.0);
+        gain.gain.linearRampToValueAtTime(0, time + 2.5);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(time);
+        osc.stop(time + 2.5);
+    }
+
+    playChantVoice(time, freq) {
+        const osc1 = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+
+        osc1.type = 'sine';
+        osc2.type = 'triangle';
+        osc1.frequency.value = freq;
+        osc2.frequency.value = freq * 2; // Octave above for brightness
+
+        filter.type = 'lowpass';
+        filter.frequency.value = 1500;
+
+        // Slow attack and release for sustained choral sound
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.25, time + 0.3);
+        gain.gain.linearRampToValueAtTime(0.2, time + 1.5);
+        gain.gain.linearRampToValueAtTime(0, time + 2.0);
+
+        osc1.connect(filter);
+        osc2.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc1.start(time);
+        osc2.start(time);
+        osc1.stop(time + 2.0);
+        osc2.stop(time + 2.0);
     }
 
     scheduleReggae(beatNumber, time) {
@@ -1580,12 +1683,17 @@ class Game {
         this.crim = null;
         this.cellarLocation = null;
         this.cellarExit = null;
+        this.shelterLocation = null;
+        this.shelterExit = null;
     }
 
-    switchLevel(targetLevel) {
+    switchLevel(targetLevel, fromLevel = null) {
         if (this.isTransitioning) return;
         this.isTransitioning = true;
         this.overlay.classList.add('active'); // Fade to black
+
+        // Remember where we came from
+        const previousLevel = fromLevel || this.currentLevel;
 
         setTimeout(() => {
             try {
@@ -1598,13 +1706,36 @@ class Game {
                     // Spawn player
                     this.camera.position.set(0, 1, 5);
                     this.camera.lookAt(0, 1, 0);
+                } else if (targetLevel === 'SHELTER') {
+                    console.log('Loading Shelter...');
+                    this.soundManager.setTrack('SHELTER');
+                    this.loadShelter();
+                    // Spawn player near entrance but away from exit trigger
+                    this.camera.position.set(0, 1, 5);
+                    this.camera.lookAt(0, 1, -5);
                 } else if (targetLevel === 'CITY') {
                     console.log('Loading City...');
                     this.soundManager.setTrack('CITY');
                     this.loadCity();
-                    // Spawn player back near cellar (but outside trigger radius)
-                    this.camera.position.set(30, 1, 48);
-                    this.camera.lookAt(30, 1, 30);
+
+                    // Spawn player just outside the door they came from
+                    console.log('>>> Returning to CITY, previousLevel:', previousLevel);
+                    if (previousLevel === 'CELLAR') {
+                        // Outside cellar door (trigger at z≈42, spawn at z=52 = 10 units away)
+                        console.log('>>> Spawning outside CELLAR at (30, 1, 52)');
+                        this.camera.position.set(30, 1, 52);
+                        this.camera.lookAt(30, 1, 30);
+                    } else if (previousLevel === 'SHELTER') {
+                        // Outside shelter door (trigger at z≈-19, spawn at z=-5 = 14 units away)
+                        console.log('>>> Spawning outside SHELTER at (70, 1, -5)');
+                        this.camera.position.set(70, 1, -5);
+                        this.camera.lookAt(70, 1, -30);
+                    } else {
+                        // Default spawn
+                        console.log('>>> No previousLevel, defaulting to (0, 1, 0)');
+                        this.camera.position.set(0, 1, 0);
+                        this.camera.lookAt(0, 1, 10);
+                    }
                 }
 
                 console.log(`Switched to ${targetLevel}`);
@@ -1614,11 +1745,11 @@ class Game {
                 console.error('Error switching level:', error);
             }
 
-            // Fade In
+            // Fade In - delay longer to prevent immediate re-entry
             setTimeout(() => {
                 this.overlay.classList.remove('active');
                 this.isTransitioning = false;
-            }, 100);
+            }, 500);
 
         }, 1000); // Wait for fade out
     }
@@ -1704,6 +1835,9 @@ class Game {
 
 
     loadCity() {
+        // Reset seeded random for consistent city layout
+        cityRandom.reset();
+
         const citySize = 200;
         const blockSize = 20;
 
@@ -1758,7 +1892,7 @@ class Game {
             for (let z = -citySize / 2 + blockSize / 2; z < citySize / 2; z += blockSize) {
                 if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
 
-                const rand = Math.random();
+                const rand = cityRandom.random();
                 if (rand < 0.6) {
                     this.addBuildingBlock(x, z, blockSize);
                 } else if (rand < 0.8) {
@@ -1770,17 +1904,11 @@ class Game {
         }
         this.addLandmarks();
         this.addCellar();
+        this.addShelter();
         this.createSpire();
         this.createCrystal();
 
-        // Spawn 5 Scavengers at different locations
-        this.scavengers = [
-            new Scavenger(this.scene, new THREE.Vector3(80, 0, 80), this),
-            new Scavenger(this.scene, new THREE.Vector3(-60, 0, 40), this),
-            new Scavenger(this.scene, new THREE.Vector3(30, 0, -70), this),
-            new Scavenger(this.scene, new THREE.Vector3(-40, 0, -50), this),
-            new Scavenger(this.scene, new THREE.Vector3(50, 0, 60), this),
-        ];
+        // Scavengers spawn in the Shelter, not the city
 
         // Spawn 10 CatThings
         this.cats = [
@@ -1887,6 +2015,45 @@ class Game {
         building.add(spot.target);
     }
 
+    addShelter() {
+        // Soup Kitchen / Homeless Shelter entrance
+        const x = 70;
+        const z = -30;
+        const size = 18;
+
+        // Load the soup kitchen sign texture
+        const signTexture = new THREE.TextureLoader().load('soup_kitchen_fin.png');
+
+        // Building
+        const height = 10;
+        const geo = new THREE.BoxGeometry(size, height, size);
+        const mat = new THREE.MeshPhongMaterial({ map: this.textures.brick });
+        const building = new THREE.Mesh(geo, mat);
+        building.position.set(x, height / 2 - 1, z);
+        this.scene.add(building);
+        this.collidableObjects.push(building);
+
+        // Store location for proximity detection
+        this.shelterLocation = new THREE.Vector3(x, 0, z + size / 2 + 2);
+
+        // Sign with soup kitchen texture (includes door image) - 775x1373 aspect ratio
+        const signGeo = new THREE.PlaneGeometry(4.5, 8);
+        const signMat = new THREE.MeshStandardMaterial({
+            map: signTexture,
+            side: THREE.DoubleSide
+        });
+        const sign = new THREE.Mesh(signGeo, signMat);
+        sign.position.set(0, -1.5, size / 2 + 0.15);
+        building.add(sign);
+
+        // Spotlight on sign (warm welcoming light)
+        const spot = new THREE.SpotLight(0xffddaa, 3, 25, 0.5, 0.5, 1);
+        spot.position.set(0, -height / 2 + 12, size / 2 + 6);
+        spot.target = sign;
+        building.add(spot);
+        building.add(spot.target);
+    }
+
     loadCellar() {
         this.scene.background = new THREE.Color(0x220033); // Dark Purple
         this.scene.fog = new THREE.FogExp2(0xcc00ff, 0.05); // Pink fog
@@ -1971,6 +2138,153 @@ class Game {
         this.computeStaticCollisionBoxes();
     }
 
+    loadShelter() {
+        // Vaporwave / SEGA Shredcore homeless shelter
+        this.scene.background = new THREE.Color(0x1a0a2e); // Deep purple-black
+        this.scene.fog = new THREE.FogExp2(0x00ffff, 0.03); // Cyan fog
+
+        // Pixelated Grid Floor (SEGA-style)
+        const floorGeo = new THREE.PlaneGeometry(30, 30);
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+
+        // Neon grid pattern
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(0, 0, 64, 64);
+        ctx.strokeStyle = '#ff00ff';
+        ctx.lineWidth = 2;
+        for (let i = 0; i <= 64; i += 8) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0);
+            ctx.lineTo(i, 64);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, i);
+            ctx.lineTo(64, i);
+            ctx.stroke();
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(15, 15);
+        tex.magFilter = THREE.NearestFilter; // Pixelated!
+
+        const floorMat = new THREE.MeshPhongMaterial({ map: tex });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        this.scene.add(floor);
+
+        // Ceiling with glow
+        const ceilCanvas = document.createElement('canvas');
+        ceilCanvas.width = 32; ceilCanvas.height = 32;
+        const cctx = ceilCanvas.getContext('2d');
+        cctx.fillStyle = '#1a0a2e';
+        cctx.fillRect(0, 0, 32, 32);
+        cctx.fillStyle = '#00ffff';
+        cctx.fillRect(14, 14, 4, 4);
+        const ceilTex = new THREE.CanvasTexture(ceilCanvas);
+        ceilTex.wrapS = ceilTex.wrapT = THREE.RepeatWrapping;
+        ceilTex.repeat.set(10, 10);
+        ceilTex.magFilter = THREE.NearestFilter;
+
+        const ceil = new THREE.Mesh(floorGeo, new THREE.MeshPhongMaterial({
+            map: ceilTex, emissive: 0x00ffff, emissiveIntensity: 0.1
+        }));
+        ceil.position.y = 5;
+        ceil.rotation.x = Math.PI / 2;
+        this.scene.add(ceil);
+
+        // Walls (Neon-trimmed)
+        const wallGeo = new THREE.BoxGeometry(30, 5, 0.5);
+        const wallMat = new THREE.MeshPhongMaterial({
+            color: 0x2a1a4a,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.05
+        });
+
+        const backWall = new THREE.Mesh(wallGeo, wallMat);
+        backWall.position.set(0, 2.5, -15);
+        this.scene.add(backWall);
+        this.collidableObjects.push(backWall);
+
+        const frontWall = new THREE.Mesh(wallGeo, wallMat);
+        frontWall.position.set(0, 2.5, 15);
+        this.scene.add(frontWall);
+        this.collidableObjects.push(frontWall);
+
+        const sideWallGeo = new THREE.BoxGeometry(0.5, 5, 30);
+        const leftWall = new THREE.Mesh(sideWallGeo, wallMat);
+        leftWall.position.set(-15, 2.5, 0);
+        this.scene.add(leftWall);
+        this.collidableObjects.push(leftWall);
+
+        const rightWall = new THREE.Mesh(sideWallGeo, wallMat);
+        rightWall.position.set(15, 2.5, 0);
+        this.scene.add(rightWall);
+        this.collidableObjects.push(rightWall);
+
+        // Long dining tables
+        const tableGeo = new THREE.BoxGeometry(8, 0.8, 2);
+        const tableMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+
+        for (let i = -6; i <= 6; i += 6) {
+            const table = new THREE.Mesh(tableGeo, tableMat);
+            table.position.set(i, 0.4, -5);
+            this.scene.add(table);
+            this.collidableObjects.push(table);
+        }
+
+        // Serving counter at back
+        const counterGeo = new THREE.BoxGeometry(12, 1.2, 2);
+        const counterMat = new THREE.MeshPhongMaterial({
+            color: 0x00ffff,
+            emissive: 0x00ffff,
+            emissiveIntensity: 0.3
+        });
+        const counter = new THREE.Mesh(counterGeo, counterMat);
+        counter.position.set(0, 0.6, -12);
+        this.scene.add(counter);
+        this.collidableObjects.push(counter);
+
+        // Exit Door (glowing white)
+        const exitGeo = new THREE.BoxGeometry(3, 5, 0.3);
+        const exitMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const exit = new THREE.Mesh(exitGeo, exitMat);
+        exit.position.set(0, 2.5, 14.6);
+        this.scene.add(exit);
+        this.shelterExit = exit.position.clone();
+        console.log('Shelter Exit set at:', this.shelterExit);
+
+        // Lighting
+        const ambient = new THREE.AmbientLight(0xff00ff, 0.3);
+        this.scene.add(ambient);
+
+        const point1 = new THREE.PointLight(0x00ffff, 1, 20);
+        point1.position.set(0, 4, 0);
+        this.scene.add(point1);
+
+        const point2 = new THREE.PointLight(0xff00ff, 0.5, 15);
+        point2.position.set(-8, 4, -8);
+        this.scene.add(point2);
+
+        const point3 = new THREE.PointLight(0xff00ff, 0.5, 15);
+        point3.position.set(8, 4, -8);
+        this.scene.add(point3);
+
+        // Spawn Scavengers at the dining tables
+        this.scavengers = [
+            new Scavenger(this.scene, new THREE.Vector3(-6, 0, -5), this),
+            new Scavenger(this.scene, new THREE.Vector3(0, 0, -5), this),
+            new Scavenger(this.scene, new THREE.Vector3(6, 0, -5), this),
+            new Scavenger(this.scene, new THREE.Vector3(-3, 0, -8), this),
+            new Scavenger(this.scene, new THREE.Vector3(3, 0, -8), this),
+        ];
+
+        this.computeStaticCollisionBoxes();
+    }
+
     spawnStonerLizard(x, y, z) {
         const group = new THREE.Group();
         group.position.set(x, y, z);
@@ -2041,8 +2355,8 @@ class Game {
 
 
     addBuildingBlock(x, z, blockSize) {
-        const isModern = Math.random() > 0.6;
-        const height = isModern ? Math.random() * 15 + 10 : Math.random() * 8 + 4;
+        const isModern = cityRandom.random() > 0.6;
+        const height = isModern ? cityRandom.random() * 15 + 10 : cityRandom.random() * 8 + 4;
 
         const tex = (isModern ? this.textures.glass : this.textures.brick).clone();
         tex.needsUpdate = true;
@@ -2078,8 +2392,8 @@ class Game {
         this.scene.add(park);
 
         for (let i = 0; i < 5; i++) {
-            const tx = x + (Math.random() - 0.5) * blockSize * 0.6;
-            const tz = z + (Math.random() - 0.5) * blockSize * 0.6;
+            const tx = x + (cityRandom.random() - 0.5) * blockSize * 0.6;
+            const tz = z + (cityRandom.random() - 0.5) * blockSize * 0.6;
 
             const trunkGeo = new THREE.CylinderGeometry(0.2, 0.2, 2);
             const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f });
@@ -2088,7 +2402,7 @@ class Game {
             this.scene.add(trunk);
             this.collidableObjects.push(trunk);
 
-            const leaveGeo = new THREE.IcosahedronGeometry(Math.random() * 0.5 + 1, 1);
+            const leaveGeo = new THREE.IcosahedronGeometry(cityRandom.random() * 0.5 + 1, 1);
             const leaveMat = new THREE.MeshPhongMaterial({ color: 0x2d5a27 });
             const leaves = new THREE.Mesh(leaveGeo, leaveMat);
             leaves.position.set(tx, 1.5, tz);
@@ -2333,20 +2647,53 @@ class Game {
             // Unstuck logic
             this.resolveCollision();
 
-            // Check Cellar Entry
-            if (this.currentLevel === 'CITY' && this.cellarLocation) {
+            // === DEBUG LOGGING (every 60 frames ~1sec) ===
+            if (!this._debugFrame) this._debugFrame = 0;
+            this._debugFrame++;
+            const shouldLog = this._debugFrame % 60 === 0;
+
+            if (shouldLog) {
+                const pos = this.camera.position;
+                console.log(`[TRANSPORT DEBUG] Level: ${this.currentLevel} | Player: (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}) | Transitioning: ${this.isTransitioning}`);
+                if (this.cellarLocation) console.log(`  Cellar Entry: (${this.cellarLocation.x}, ${this.cellarLocation.y}, ${this.cellarLocation.z}) | Dist: ${pos.distanceTo(this.cellarLocation).toFixed(1)}`);
+                if (this.shelterLocation) console.log(`  Shelter Entry: (${this.shelterLocation.x}, ${this.shelterLocation.y}, ${this.shelterLocation.z}) | Dist: ${pos.distanceTo(this.shelterLocation).toFixed(1)}`);
+                if (this.cellarExit) console.log(`  Cellar Exit: (${this.cellarExit.x}, ${this.cellarExit.y}, ${this.cellarExit.z}) | Dist: ${pos.distanceTo(this.cellarExit).toFixed(1)}`);
+                if (this.shelterExit) console.log(`  Shelter Exit: (${this.shelterExit.x}, ${this.shelterExit.y}, ${this.shelterExit.z}) | Dist: ${pos.distanceTo(this.shelterExit).toFixed(1)}`);
+            }
+
+            // Check Cellar Entry (only if not transitioning)
+            if (!this.isTransitioning && this.currentLevel === 'CITY' && this.cellarLocation) {
                 const dist = this.camera.position.distanceTo(this.cellarLocation);
-                if (dist < 4.0) {
+                if (dist < 2.0) {
+                    console.log('>>> TRIGGERING: CITY → CELLAR | Dist:', dist.toFixed(2));
                     this.switchLevel('CELLAR');
                 }
             }
 
-            // Check Cellar Exit
-            if (this.currentLevel === 'CELLAR' && this.cellarExit) {
+            // Check Shelter Entry (only if not transitioning)
+            if (!this.isTransitioning && this.currentLevel === 'CITY' && this.shelterLocation) {
+                const dist = this.camera.position.distanceTo(this.shelterLocation);
+                if (dist < 2.0) {
+                    console.log('>>> TRIGGERING: CITY → SHELTER | Dist:', dist.toFixed(2));
+                    this.switchLevel('SHELTER');
+                }
+            }
+
+            // Check Cellar Exit (only if not transitioning)
+            if (!this.isTransitioning && this.currentLevel === 'CELLAR' && this.cellarExit) {
                 const dist = this.camera.position.distanceTo(this.cellarExit);
                 if (dist < 2.0) {
-                    console.log('Triggering City Exit from Cellar. Dist:', dist);
-                    this.switchLevel('CITY');
+                    console.log('>>> TRIGGERING: CELLAR → CITY | Dist:', dist.toFixed(2));
+                    this.switchLevel('CITY', 'CELLAR');  // Explicitly pass source
+                }
+            }
+
+            // Check Shelter Exit (only if not transitioning)
+            if (!this.isTransitioning && this.currentLevel === 'SHELTER' && this.shelterExit) {
+                const dist = this.camera.position.distanceTo(this.shelterExit);
+                if (dist < 2.0) {
+                    console.log('>>> TRIGGERING: SHELTER → CITY | Dist:', dist.toFixed(2));
+                    this.switchLevel('CITY', 'SHELTER');  // Explicitly pass source
                 }
             }
         }
