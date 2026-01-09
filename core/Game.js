@@ -3,6 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { cityRandom } from '../utils/SeededRandom.js';
 import { SoundManager } from '../audio/SoundManager.js';
@@ -14,6 +15,7 @@ import { Ditto } from '../creatures/Ditto.js';
 import { Sentinel } from '../creatures/Sentinel.js';
 import { Creeper } from '../creatures/Creeper.js';
 import { Crim } from '../creatures/Crim.js';
+import { Physics } from './Physics.js';
 
 class Game {
     constructor() {
@@ -28,7 +30,7 @@ class Game {
 
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x020205);
-        this.scene.fog = new THREE.FogExp2(0x020205, 0.04);
+        this.scene.fog = new THREE.FogExp2(0x020205, 0.015);
 
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.z = 5;
@@ -74,23 +76,22 @@ class Game {
         this.soundManager = new SoundManager();
         this.minimap = new MiniMap('minimap', this);
         this.particles = new ParticleSystem(this.scene);
-        // Characters moved to loadCity to support level switching
-        this.sentinel = null;
-        this.creeper = null;
-        this.crim = null;
 
-        window.addEventListener('sentinel-attack', () => {
-            this.score = Math.max(0, this.score - 50);
-            document.querySelector('#score').textContent = this.score.toString().padStart(3, '0');
+        // Rapier.js physics
+        this.physics = new Physics();
+        this.physicsReady = false;
 
-            if (this.score === 0 && this.totalShards > 0) {
-                // Potential game over logic
-                console.log("Dead");
-            }
-        });
+        this.initAsync();
+    }
 
+    async initAsync() {
+        // Initialize physics first (WASM loading)
+        await this.physics.init();
+        this.physicsReady = true;
+        console.log('Physics ready, starting game init');
         this.init();
     }
+
 
     init() {
         const startBtn = document.querySelector('#start-button');
@@ -135,7 +136,6 @@ class Game {
         this.composer.addPass(bloomPass);
 
         this.overlay = document.getElementById('transition-overlay');
-        this.currentLevel = 'CITY';
         this.currentLevel = 'CITY';
         this.isTransitioning = false;
 
@@ -267,7 +267,7 @@ class Game {
         this.scene.add(this.stars);
 
         // Digital Grid Horizon
-        const gridGeo = new THREE.PlaneGeometry(1000, 1000, 50, 50);
+        const gridGeo = new THREE.PlaneGeometry(2000, 2000, 50, 50);
         const gridMat = new THREE.MeshBasicMaterial({
             color: 0x00f2fe,
             wireframe: true,
@@ -321,35 +321,59 @@ class Game {
 
         this.currentLevel = 'CITY';
         this.scene.background = new THREE.Color(0x000000);
-        this.scene.fog = new THREE.FogExp2(0x000510, 0.02);
+        this.scene.fog = new THREE.FogExp2(0x000510, 0.015);
 
         this.createSky();
 
         // City Lights
-        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        const ambientLight = new THREE.AmbientLight(0x404040, 2.5); // Increased brightness
         this.scene.add(ambientLight);
 
         const pointLight = new THREE.PointLight(0x00f2fe, 10, 100);
         pointLight.position.set(0, 20, 0);
         this.scene.add(pointLight);
 
-        const groundGeo = new THREE.PlaneGeometry(citySize, citySize);
+        const groundGeo = new THREE.BoxGeometry(citySize, 1, citySize);
         const groundMat = new THREE.MeshStandardMaterial({
             map: this.textures.asphalt,
             roughness: 0.8
         });
         const ground = new THREE.Mesh(groundGeo, groundMat);
-        ground.rotation.x = -Math.PI / 2;
-        ground.position.y = -1;
+        ground.position.y = -0.5; // Top surface at y=0
+        ground.name = 'CityGround';
         this.scene.add(ground);
 
+        // Add ground to Rapier physics (need to update matrix first)
+        ground.updateMatrixWorld(true);
+        console.log('Creating ground collider, physicsReady=' + this.physicsReady);
+        this.physics.createGroundCollider(2000); // Expanded ground for off-map exploration
+
+        const mapSize = 2000;
         // Neon Floor Grid
-        const floorGrid = new THREE.GridHelper(citySize, 20, 0x00f2fe, 0x111111);
+        const floorGrid = new THREE.GridHelper(mapSize, 100, 0x00f2fe, 0x111111);
         floorGrid.position.y = -0.99;
         floorGrid.material.transparent = true;
         floorGrid.material.opacity = 0.3;
         this.scene.add(floorGrid);
 
+        for (let i = -mapSize / 2; i <= mapSize / 2; i += blockSize * 2) {
+            if (Math.abs(i) <= citySize / 2) continue; // Skip city center which has its own density
+            const hLineGeo = new THREE.PlaneGeometry(mapSize, 0.4);
+            const hLineMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+            const hLine = new THREE.Mesh(hLineGeo, hLineMat);
+            hLine.rotation.x = -Math.PI / 2;
+            hLine.position.set(0, -0.99, i);
+            this.scene.add(hLine);
+
+            const vLineGeo = new THREE.PlaneGeometry(0.4, mapSize);
+            const vLineMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+            const vLine = new THREE.Mesh(vLineGeo, vLineMat);
+            vLine.rotation.x = -Math.PI / 2;
+            vLine.position.set(i, -0.99, 0);
+            this.scene.add(vLine);
+        }
+
+        // Inner City Grid (Dense)
         for (let i = -citySize / 2; i <= citySize / 2; i += blockSize) {
             const hLineGeo = new THREE.PlaneGeometry(citySize, 0.4);
             const hLineMat = new THREE.MeshBasicMaterial({ color: 0x444444 });
@@ -385,6 +409,7 @@ class Game {
         this.addShelter();
         this.createSpire();
         this.createCrystal();
+        this.addEasterEggHouse(); // Hidden house at the map edge
 
         // Scavengers spawn in the Shelter, not the city
 
@@ -602,10 +627,10 @@ class Game {
         console.log('Cellar Exit set at:', this.cellarExit);
 
         // Lights
-        const ambient = new THREE.AmbientLight(0xff00ff, 0.5);
+        const ambient = new THREE.AmbientLight(0xff00ff, 0.8); // Brighter ambient
         this.scene.add(ambient);
 
-        const point = new THREE.PointLight(0x00ffff, 1, 15);
+        const point = new THREE.PointLight(0x00ffff, 1.5, 20); // Brighter point light
         point.position.set(0, 3, 0);
         this.scene.add(point);
 
@@ -799,34 +824,112 @@ class Game {
         const group = new THREE.Group();
         group.position.set(x, y, z);
 
-        // Body (Yellow with spots procedurally?) 
-        // Simple for now: Orange
-        const bodyGeo = new THREE.BoxGeometry(0.5, 1.4, 0.3);
-        const bodyMat = new THREE.MeshPhongMaterial({ color: 0xffaa00 });
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.position.y = 0.7;
-        group.add(body);
+        // Materials
+        const skinColor = 0xffccaa;
+        const shirtColor = 0x333333;
+        const pantsColor = 0x224488;
 
-        // Head
-        const headGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
-        const head = new THREE.Mesh(headGeo, bodyMat);
-        head.position.y = 1.6;
+        const skinMat = new THREE.MeshPhongMaterial({ color: skinColor });
+        const shirtMat = new THREE.MeshPhongMaterial({ color: shirtColor });
+        const pantsMat = new THREE.MeshPhongMaterial({ color: pantsColor });
+
+        // Generate Face Texture
+        const faceCanvas = document.createElement('canvas');
+        faceCanvas.width = 64; faceCanvas.height = 64;
+        const ctx = faceCanvas.getContext('2d');
+
+        // Skin background
+        ctx.fillStyle = '#' + new THREE.Color(skinColor).getHexString();
+        ctx.fillRect(0, 0, 64, 64);
+
+        // Eyes (White)
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(10, 20, 15, 10); // Left Eye
+        ctx.fillRect(39, 20, 15, 10); // Right Eye
+
+        // Pupils (Black) - looking slightly to the side/stoned
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(16, 22, 6, 6);
+        ctx.fillRect(45, 22, 6, 6);
+
+        // Mouth (smoker)
+        ctx.fillStyle = '#aa5555';
+        ctx.fillRect(20, 45, 24, 4);
+
+        const faceTex = new THREE.CanvasTexture(faceCanvas);
+        faceTex.magFilter = THREE.NearestFilter; // Pixelated look
+
+        // Face Material (Only for front face)
+        const faceMat = new THREE.MeshPhongMaterial({ map: faceTex });
+
+        // Legs
+        const legGeo = new THREE.BoxGeometry(0.2, 0.9, 0.25);
+
+        const leftLeg = new THREE.Mesh(legGeo, pantsMat);
+        leftLeg.position.set(-0.15, 0.45, 0);
+        group.add(leftLeg);
+
+        const rightLeg = new THREE.Mesh(legGeo, pantsMat);
+        rightLeg.position.set(0.15, 0.45, 0);
+        group.add(rightLeg);
+
+        // Torso
+        const torsoGeo = new THREE.BoxGeometry(0.5, 0.7, 0.3);
+        const torso = new THREE.Mesh(torsoGeo, shirtMat);
+        torso.position.set(0, 1.25, 0);
+        group.add(torso);
+
+        // Head - Multi-material to put face only on front
+        const headGeo = new THREE.BoxGeometry(0.25, 0.3, 0.25);
+        // Materials order: +x, -x, +y, -y, +z, -z
+        // We want face on +z
+        const headMaterials = [
+            skinMat, // +x
+            skinMat, // -x
+            skinMat, // +y
+            skinMat, // -y
+            faceMat, // +z (Front face)
+            skinMat  // -z
+        ];
+        const head = new THREE.Mesh(headGeo, headMaterials);
+        head.position.set(0, 1.75, 0);
         group.add(head);
 
-        // Cigarette
-        const cigGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.2);
+        // Arms
+        const armGeo = new THREE.BoxGeometry(0.15, 0.6, 0.15);
+
+        // Left Arm (hanging)
+        const leftArm = new THREE.Mesh(armGeo, shirtMat);
+        leftArm.position.set(-0.35, 1.3, 0);
+        group.add(leftArm);
+
+        // Right Arm (Raising cig)
+        const rightArm = new THREE.Mesh(armGeo, shirtMat);
+        rightArm.rotation.x = -Math.PI / 4; // Lifted slightly
+        rightArm.rotation.z = -Math.PI / 8; // Angled in
+        rightArm.position.set(0.35, 1.3, 0.1);
+        group.add(rightArm);
+
+
+        // Cigarette (positioned near head)
+        const cigGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.08);
         const cigMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const cig = new THREE.Mesh(cigGeo, cigMat);
         cig.rotation.x = Math.PI / 2;
-        cig.position.set(0.1, 1.5, 0.3);
+        // Position relative to head/mouth area
+        cig.position.set(0.05, 1.68, 0.2);
         group.add(cig);
 
         // Ember
-        const emberGeo = new THREE.SphereGeometry(0.025);
+        const emberGeo = new THREE.SphereGeometry(0.01);
         const emberMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
         const ember = new THREE.Mesh(emberGeo, emberMat);
-        ember.position.set(0.0, 0.1, 0);
+        ember.position.set(0.0, 0.04, 0);
         cig.add(ember);
+
+        // Smoke particle simulation (simple rising cubes)
+        // Note: Real particle system is better, but for a static mesh group this adds flair
+        // We'll skip complex particles here to keep it simple as a "model replacement"
 
         this.scene.add(group);
     }
@@ -1009,6 +1112,53 @@ class Game {
         this.crystal.add(this.core);
     }
 
+    addEasterEggHouse() {
+        const loader = new GLTFLoader();
+        const houseX = 200;
+        const houseZ = 200;
+
+        loader.load(
+            './assets/maps/house.glb',
+            (gltf) => {
+                const model = gltf.scene;
+                model.scale.set(0.03, 0.03, 0.03);
+                model.position.set(houseX, -2.0, houseZ);
+                model.updateMatrixWorld(true);
+
+                // Enable shadows
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        if (child.material) {
+                            child.material.side = THREE.DoubleSide;
+                        }
+                    }
+                });
+
+                this.scene.add(model);
+                this.easterEggHouse = model;
+
+                // Create physics colliders from the GLB meshes
+                if (this.physicsReady) {
+                    this.physics.addModelColliders(model);
+                }
+
+                // Bright light at the house
+                const houseLight = new THREE.PointLight(0xffffff, 1000, 250);
+                houseLight.position.set(houseX, 20, houseZ);
+                this.scene.add(houseLight);
+
+                console.log('House (physics colliders) loaded at:', houseX, houseZ);
+            },
+            undefined,
+            (err) => {
+                console.error('Error loading house.glb:', err);
+            }
+        );
+    }
+
+
     onResize() {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
@@ -1021,18 +1171,28 @@ class Game {
         if (Math.random() > 0.95) {
             const lat = Math.floor(Math.random() * 5 + 10);
             document.querySelector('#latency').textContent = `${lat}ms`;
+
+            // Update coordinate display
+            const coordsEl = document.querySelector('#coords');
+            if (coordsEl) {
+                coordsEl.textContent = `X: ${Math.round(this.camera.position.x)} Z: ${Math.round(this.camera.position.z)}`;
+            }
         }
 
         const delta = this.clock.getDelta();
         const elapsed = this.clock.getElapsedTime();
+
+        // Step physics world
+        if (this.physicsReady) {
+            this.physics.step(delta);
+        }
 
         if (this.controls.isLocked) {
             this.velocity.x -= this.velocity.x * 10.0 * delta;
             this.velocity.z -= this.velocity.z * 10.0 * delta;
 
             this.direction.z = Number(this.moveState.forward) - Number(this.moveState.backward);
-            this.direction.x = Number(this.moveState.right) - Number(this.moveState.left);
-            this.direction.x = Number(this.moveState.right) - Number(this.moveState.left);
+            this.direction.x = Number(this.moveState.left) - Number(this.moveState.right);
             this.direction.normalize();
 
             const speedMultiplier = this.moveState.shift ? 2.5 : 1.0;
@@ -1043,24 +1203,46 @@ class Game {
             if (this.moveState.forward || this.moveState.backward) this.velocity.z -= this.direction.z * 100.0 * delta * speedMultiplier;
             if (this.moveState.left || this.moveState.right) this.velocity.x -= this.direction.x * 100.0 * delta * speedMultiplier;
 
+            // Calculate world-space movement
             const moveDistanceX = -this.velocity.x * delta;
             const moveDistanceZ = -this.velocity.z * delta;
 
-            if (this.canMove(moveDistanceX, moveDistanceZ)) {
-                this.controls.moveRight(moveDistanceX);
-                this.controls.moveForward(moveDistanceZ);
-            } else {
-                this.velocity.set(0, 0, 0);
-            }
+            const dir = new THREE.Vector3();
+            this.camera.getWorldDirection(dir);
+            dir.y = 0;
+            dir.normalize();
+            const sideDir = new THREE.Vector3().crossVectors(this.camera.up, dir).normalize();
 
-            // Apply Gravity and Jump
+            const worldMovement = new THREE.Vector3();
+            worldMovement.addScaledVector(dir, moveDistanceZ);
+            worldMovement.addScaledVector(sideDir, moveDistanceX);
+
+            // Apply Gravity
             this.verticalVelocity -= this.gravity * delta;
-            this.camera.position.y += this.verticalVelocity * delta;
+            worldMovement.y = this.verticalVelocity * delta;
 
-            if (this.camera.position.y <= 1.0) {
-                this.verticalVelocity = 0;
-                this.camera.position.y = 1.0;
-                this.canJump = true;
+            // Use Rapier physics for collision resolution
+            if (this.physicsReady && this.physics.ready) {
+                const newPos = this.physics.movePlayer(
+                    this.camera.position,
+                    worldMovement,
+                    delta
+                );
+                this.camera.position.copy(newPos);
+
+                // Check if grounded
+                if (this.physics.isGrounded()) {
+                    this.verticalVelocity = 0;
+                    this.canJump = true;
+                }
+            } else {
+                // Fallback: no physics yet, just move freely
+                this.camera.position.add(worldMovement);
+                if (this.camera.position.y < 1.0) {
+                    this.camera.position.y = 1.0;
+                    this.verticalVelocity = 0;
+                    this.canJump = true;
+                }
             }
 
             // Footsteps
@@ -1189,48 +1371,101 @@ class Game {
     computeStaticCollisionBoxes() {
         this.collisionBoxes = [];
         for (const object of this.collidableObjects) {
-            // Ensure object matrix is up to date
             object.updateMatrixWorld(true);
             const box = new THREE.Box3().setFromObject(object);
+
+            // FILTRATION LOGIC:
+            // If the box is massive (e.g. > 60 units wide), it's likely a bounding volume 
+            // or a giant ground plane that will block the whole area.
+            const size = new THREE.Vector3();
+            box.getSize(size);
+
+            if (size.x > 60 || size.z > 60) {
+                console.warn(`Skipping giant collision box for ${object.name}:`, size.x, size.z);
+                continue;
+            }
+
             this.collisionBoxes.push(box);
         }
         console.log(`Computed ${this.collisionBoxes.length} static collision boxes`);
     }
 
+    findFloorHeight() {
+        // Absolute base ground (city asphalt)
+        let highestFloor = 0;
+
+        // Use Raycasting for perfect terrain/mesh height detection
+        const raycaster = new THREE.Raycaster();
+        const downDir = new THREE.Vector3(0, -1, 0);
+
+        // Ray from slightly above the current head position
+        const rayOrigin = this.camera.position.clone();
+        rayOrigin.y += 0.5;
+
+        raycaster.set(rayOrigin, downDir);
+
+        const intersects = raycaster.intersectObjects(this.collidableObjects, true);
+
+        if (intersects.length > 0) {
+            // Find the first intersection point that is BELOW our current position or slightly inside
+            for (const intersect of intersects) {
+                if (intersect.point.y <= this.camera.position.y - 0.5) {
+                    highestFloor = Math.max(highestFloor, intersect.point.y);
+                    // Remember the mesh we are standing on to allow horizontal passing
+                    this.standingOnMesh = intersect.object;
+                    break;
+                }
+            }
+        } else {
+            this.standingOnMesh = null;
+        }
+
+        return highestFloor;
+    }
+
     resolveCollision() {
         const playerPos = this.camera.position.clone();
-        playerPos.y = 1;
+        const eyeHeight = 1.0;
+        const footLevel = playerPos.y - eyeHeight;
+        const stepThreshold = 0.8;
+        const size = 0.3;
 
         const playerBox = new THREE.Box3();
-        const size = 0.3; // Reduced size
-        playerBox.min.set(playerPos.x - size, 0, playerPos.z - size);
-        playerBox.max.set(playerPos.x + size, 2, playerPos.z + size);
+        playerBox.min.set(playerPos.x - size, footLevel, playerPos.z - size);
+        playerBox.max.set(playerPos.x + size, footLevel + 2.0, playerPos.z + size);
 
-        for (const box of this.collisionBoxes) {
+        for (let i = 0; i < this.collisionBoxes.length; i++) {
+            const box = this.collisionBoxes[i];
+            const mesh = this.collidableObjects[i];
+
             if (playerBox.intersectsBox(box)) {
-                // Determine simplest resolution (push out closest side)
+                // Hybrid Logic:
+                // 1. If we are standing on this mesh (according to raycast), DON'T let it block us horizontally.
+                if (this.standingOnMesh && (this.standingOnMesh === mesh || this.standingOnMesh.uuid === mesh.uuid)) {
+                    continue;
+                }
+
+                // 2. Step-up logic for small bumps
+                if (box.max.y < footLevel + stepThreshold) {
+                    continue;
+                }
+
+                // 3. Resolve horizontal collision for Walls
                 const center = new THREE.Vector3();
                 box.getCenter(center);
-
                 const boxSize = new THREE.Vector3();
                 box.getSize(boxSize);
 
                 const dx = playerPos.x - center.x;
                 const dz = playerPos.z - center.z;
 
-                // Normalize difference vs box extent
                 const ox = Math.abs(dx) - (boxSize.x / 2 + size);
                 const oz = Math.abs(dz) - (boxSize.z / 2 + size);
 
-                // If overlapping, ox and oz will be negative. The closer to 0 (less negative), the closer to edge.
-                // We want to push along the axis with the LEAST overlap (closest to edge)
-
                 if (ox > oz) {
-                    // X overlap is smaller (mathematically larger negative number), push X
                     const sign = Math.sign(dx) || 1;
                     this.camera.position.x = center.x + (boxSize.x / 2 + size + 0.01) * sign;
                 } else {
-                    // Z overlap is smaller, push Z
                     const sign = Math.sign(dz) || 1;
                     this.camera.position.z = center.z + (boxSize.z / 2 + size + 0.01) * sign;
                 }
@@ -1239,19 +1474,25 @@ class Game {
     }
 
     checkCollision(position) {
-        // Create a box for the character
         const charBox = new THREE.Box3();
         const size = 0.3;
-        charBox.min.set(position.x - size, 0, position.z - size);
-        charBox.max.set(position.x + size, 2, position.z + size);
+        const eyeHeight = 1.0;
+        const footLevel = position.y - eyeHeight;
+        const stepHeight = 0.8; // High threshold for accessibility
 
-        // Lazily compute if empty (should be called explicitly though)
+        charBox.min.set(position.x - size, footLevel, position.z - size);
+        charBox.max.set(position.x + size, footLevel + 2.0, position.z + size);
+
         if (!this.collisionBoxes || this.collisionBoxes.length === 0) {
             this.computeStaticCollisionBoxes();
         }
 
         for (const box of this.collisionBoxes) {
             if (charBox.intersectsBox(box)) {
+                // STEP HEIGHT: Allow horizontal movement into things we can step over
+                if (box.max.y < footLevel + stepHeight) {
+                    continue;
+                }
                 return true;
             }
         }
@@ -1260,7 +1501,6 @@ class Game {
 
     canMove(distX, distZ) {
         const playerPos = this.camera.position.clone();
-        playerPos.y = 1;
 
         // Calculate theoretical next position (World Space)
         const nextPos = playerPos.clone();

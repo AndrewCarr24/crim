@@ -127,5 +127,31 @@ export class MiniMap {
                 }
             });
         }
+
+        // Draw Easter Egg House (Gold house icon - SW corner)
+        if (game.easterEggHouseLocation) {
+            ctx.fillStyle = '#ffd700'; // Gold
+            const rx = (game.easterEggHouseLocation.x - game.camera.position.x) * zoom;
+            const rz = (game.easterEggHouseLocation.z - game.camera.position.z) * zoom;
+
+            // Draw a simple house shape
+            ctx.beginPath();
+            ctx.moveTo(centerX + rx, centerY + rz - 5); // Roof peak
+            ctx.lineTo(centerX + rx + 5, centerY + rz); // Roof right
+            ctx.lineTo(centerX + rx + 3, centerY + rz); // House top right
+            ctx.lineTo(centerX + rx + 3, centerY + rz + 4); // House bottom right
+            ctx.lineTo(centerX + rx - 3, centerY + rz + 4); // House bottom left
+            ctx.lineTo(centerX + rx - 3, centerY + rz); // House top left
+            ctx.lineTo(centerX + rx - 5, centerY + rz); // Roof left
+            ctx.closePath();
+            ctx.fill();
+
+            // Pulsing glow effect
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(centerX + rx, centerY + rz, 6 + Math.sin(Date.now() * 0.005) * 2, 0, Math.PI * 2);
+            ctx.stroke();
+        }
     }
 }

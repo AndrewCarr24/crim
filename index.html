@@ -10,7 +10,8 @@
         {
           "imports": {
             "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "@dimforge/rapier3d": "https://esm.sh/@dimforge/rapier3d-compat@0.14.0"
           }
         }
     </script>
@@ -43,6 +44,10 @@
     <div class="stat-box glass-panel">
       <span class="label">LATENCY</span>
       <span id="latency" class="value">12ms</span>
+    </div>
+    <div class="stat-box glass-panel">
+      <span class="label">POS</span>
+      <span id="coords" class="value" style="font-size: 0.8rem;">X: 0 Z: 0</span>
     </div>
     <div id="minimap-container" class="glass-panel">
       <canvas id="minimap"></canvas>
