@@ -296,6 +296,17 @@ class Game {
                 break;
             case 'ShiftLeft':
             case 'ShiftRight': this.moveState.shift = true; break;
+            case 'KeyJ':
+                console.log('[INPUT DEBUG] Key J DOWN');
+                this.moveState.action = true;
+                break;
+            case 'KeyH':
+                // Debug Teleport to House
+                console.log('Teleporting to House...');
+                this.camera.position.set(85, 11, 263);
+                this.camera.lookAt(85, 11, 253);
+                this.verticalVelocity = 0;
+                break;
         }
     }
 
@@ -307,6 +318,7 @@ class Game {
             case 'KeyD': this.moveState.right = false; break;
             case 'ShiftLeft':
             case 'ShiftRight': this.moveState.shift = false; break;
+            case 'KeyJ': this.moveState.action = false; break;
         }
     }
 
@@ -1118,20 +1130,44 @@ class Game {
         const houseZ = 200;
 
         loader.load(
-            './assets/maps/house.glb',
+            'assets/maps/house.glb',
             (gltf) => {
                 const model = gltf.scene;
-                model.scale.set(0.03, 0.03, 0.03);
+                // Scale adjusted from 0.03 to 1.0 for new export
+                model.scale.set(.5, .5, .5);
                 model.position.set(houseX, -2.0, houseZ);
                 model.updateMatrixWorld(true);
 
                 // Enable shadows
+                console.log('[LOADER DEBUG] Traversing NEW house model...');
+
                 model.traverse((child) => {
                     if (child.isMesh) {
+                        console.log(`[LOADER DEBUG] Found mesh: "${child.name}"`);
                         child.castShadow = true;
                         child.receiveShadow = true;
                         if (child.material) {
                             child.material.side = THREE.DoubleSide;
+                        }
+
+                        // Check for Door using user-provided name
+                        if (child.name === 'Material3021') {
+                            // Compute Center of Geometry (Visual Center)
+                            child.geometry.computeBoundingBox();
+                            const center = new THREE.Vector3();
+                            child.geometry.boundingBox.getCenter(center);
+                            child.localToWorld(center);
+
+                            this.houseDoor = {
+                                mesh: child,
+                                isOpen: false,
+                                closedRotation: child.quaternion.clone(),
+                                openRotation: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0)).multiply(child.quaternion.clone()),
+                                interactionPoint: center,
+                                isMoving: false
+                            };
+
+                            console.log('House Door found and initialized:', child.name);
                         }
                     }
                 });
@@ -1141,8 +1177,15 @@ class Game {
 
                 // Create physics colliders from the GLB meshes
                 if (this.physicsReady) {
-                    this.physics.addModelColliders(model);
+                    // Exclude door from static world collision
+                    this.physics.addModelColliders(model, ['Material3021']);
+
+                    // Manually create initial collider for the door (closed state)
+                    if (this.houseDoor && this.houseDoor.mesh) {
+                        this.houseDoor.collider = this.physics.createTrimeshCollider(this.houseDoor.mesh);
+                    }
                 }
+
 
                 // Bright light at the house
                 const houseLight = new THREE.PointLight(0xffffff, 1000, 250);
@@ -1181,6 +1224,71 @@ class Game {
 
         const delta = this.clock.getDelta();
         const elapsed = this.clock.getElapsedTime();
+
+
+        // Door Interaction
+        if (this.moveState.action) {
+            if (!this._jPressed) {
+                this._jPressed = true;
+                console.log('[ANIMATE DEBUG] Action state active (J pressed)');
+                if (!this.houseDoor) console.warn('[ANIMATE DEBUG] this.houseDoor is NULL');
+                else if (!this.houseDoor.mesh) console.warn('[ANIMATE DEBUG] this.houseDoor.mesh is NULL');
+                else if (!this.houseDoor.interactionPoint) console.warn('[ANIMATE DEBUG] this.houseDoor.interactionPoint is NULL');
+            }
+        } else {
+            this._jPressed = false;
+        }
+
+        if (this.houseDoor && this.houseDoor.mesh && this.houseDoor.interactionPoint) {
+            const dist = this.camera.position.distanceTo(this.houseDoor.interactionPoint);
+
+            if (this.moveState.action) {
+                if (dist < 40) { // Radius 40 for easy interaction
+                    if (!this.actionLocked) {
+                        this.houseDoor.isOpen = !this.houseDoor.isOpen;
+                        this.actionLocked = true;
+                        this.houseDoor.isMoving = true;
+                        this.soundManager.playCollect();
+                        console.log(`Door toggled: ${this.houseDoor.isOpen ? 'OPEN' : 'CLOSED'}`);
+
+                        // PHYSICS LOGIC
+                        if (this.houseDoor.isOpen) {
+                            // Opening: Remove collider immediately so player can look/walk inside
+                            if (this.houseDoor.collider) {
+                                this.physics.removeCollider(this.houseDoor.collider);
+                                this.houseDoor.collider = null;
+                            }
+                        } else {
+                            // Closing: Wait until animation finishes to re-add collider
+                            // (Handled in animation block below)
+                        }
+                    }
+                }
+            } else {
+                this.actionLocked = false;
+            }
+
+            // Animate Door (keep logic even if just toggling visibility for now)
+            if (this.houseDoor.isMoving) {
+                const targetRot = this.houseDoor.isOpen ? this.houseDoor.openRotation : this.houseDoor.closedRotation;
+                this.houseDoor.mesh.quaternion.slerp(targetRot, delta * 5);
+
+                if (this.houseDoor.mesh.quaternion.angleTo(targetRot) < 0.01) {
+                    this.houseDoor.mesh.quaternion.copy(targetRot);
+                    this.houseDoor.isMoving = false;
+
+                    // PHYSICS LOGIC: Re-enable collision when fully CLOSED
+                    if (!this.houseDoor.isOpen) {
+                        // Ensure it is fully snapped to rotation
+                        this.houseDoor.mesh.updateMatrixWorld(true);
+                        // Re-create collider at closed position
+                        if (!this.houseDoor.collider) {
+                            this.houseDoor.collider = this.physics.createTrimeshCollider(this.houseDoor.mesh);
+                        }
+                    }
+                }
+            }
+        }
 
         // Step physics world
         if (this.physicsReady) {

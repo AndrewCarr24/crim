@@ -13,6 +13,7 @@ export class Physics {
         this.playerCollider = null;
         this.playerBody = null;
         this.ready = false;
+        // Map to store colliders by mesh ID or name if needed, but array is fine for now
     }
 
     /**
@@ -114,12 +115,30 @@ export class Physics {
     }
 
     /**
+     * Remove a collider from the world
+     */
+    removeCollider(collider) {
+        if (!collider) return;
+        this.world.removeCollider(collider, false); // false = don't remove rigid body (unless we want to?)
+        // Note: modify colliders list if needed, but simple removal is fine for now
+        const index = this.colliders.indexOf(collider);
+        if (index > -1) {
+            this.colliders.splice(index, 1);
+        }
+        console.log('Collider removed');
+    }
+
+    /**
      * Add all meshes from a Three.js scene/model as colliders
      */
-    addModelColliders(model) {
+    addModelColliders(model, excludeNames = []) {
         let count = 0;
         model.traverse((child) => {
             if (child.isMesh) {
+                if (excludeNames.includes(child.name)) {
+                    console.log(`Skipping collision for excluded object: ${child.name}`);
+                    return;
+                }
                 const collider = this.createTrimeshCollider(child);
                 if (collider) count++;
             }
