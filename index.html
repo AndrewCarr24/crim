@@ -67,6 +67,18 @@
   </div>
 
   <canvas id="game-canvas"></canvas>
+
+  <!-- SAFE READING OVERLAY (Inline Styles) -->
+  <div id="reading-overlay"
+    style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); z-index: 10000; justify-content: center; align-items: center;">
+    <div
+      style="width: 600px; height: 800px; background: #fdf6e3; color: #333; padding: 60px; box-shadow: 0 0 50px rgba(0,0,0,0.8); border-radius: 5px; font-family: serif; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative;">
+      <div style="font-size: 24px; font-style: italic; color: #5d4037;">[BLANK PAGE]</div>
+      <div style="position: absolute; bottom: 20px; font-family: monospace; font-size: 14px; color: #888;">PRESS J TO
+        CLOSE</div>
+    </div>
+  </div>
+
   <script type="module" src="main.js"></script>
 </body>
 

@@ -232,6 +232,24 @@ class Game {
         }, 1000); // Wait for fade out
     }
 
+    openBook() {
+        if (!this.houseBook) return;
+        console.log('Opening Book...');
+        this.houseBook.isOpen = true;
+        const overlay = document.getElementById('reading-overlay');
+        if (overlay) overlay.style.display = 'flex';
+        this.controls.unlock(); // Release mouse to read
+    }
+
+    closeBook() {
+        if (!this.houseBook) return;
+        console.log('Closing Book...');
+        this.houseBook.isOpen = false;
+        const overlay = document.getElementById('reading-overlay');
+        if (overlay) overlay.style.display = 'none';
+        this.controls.lock(); // Re-lock mouse to play
+    }
+
     createSky() {
         const starGeo = new THREE.BufferGeometry();
         const starCount = 3000;
@@ -1214,6 +1232,15 @@ class Game {
                 book.position.set(97, 11, 242);
                 this.scene.add(book);
 
+                // Initialize House Book State
+                this.houseBook = {
+                    mesh: book,
+                    interactionPoint: book.position.clone(),
+                    isOpen: false
+                };
+
+                console.log('House (physics colliders) loaded at:', houseX, houseZ);
+
 
                 console.log('House (physics colliders) loaded at:', houseX, houseZ);
             },
@@ -1257,6 +1284,18 @@ class Game {
                 if (!this.houseDoor) console.warn('[ANIMATE DEBUG] this.houseDoor is NULL');
                 else if (!this.houseDoor.mesh) console.warn('[ANIMATE DEBUG] this.houseDoor.mesh is NULL');
                 else if (!this.houseDoor.interactionPoint) console.warn('[ANIMATE DEBUG] this.houseDoor.interactionPoint is NULL');
+
+                // Book Interaction Check
+                if (this.houseBook) {
+                    const dist = this.camera.position.distanceTo(this.houseBook.interactionPoint);
+                    if (dist < 5.0) { // 5 unit radius
+                        if (this.houseBook.isOpen) {
+                            this.closeBook();
+                        } else {
+                            this.openBook();
+                        }
+                    }
+                }
             }
         } else {
             this._jPressed = false;
