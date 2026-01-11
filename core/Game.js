@@ -1192,6 +1192,29 @@ class Game {
                 houseLight.position.set(houseX, 20, houseZ);
                 this.scene.add(houseLight);
 
+                // --- ADD GREAT GATSBY BOOK (VISUAL ONLY) ---
+                const bookGeo = new THREE.BoxGeometry(0.5, 0.1, 0.7);
+                const texLoader = new THREE.TextureLoader();
+                const coverTex = texLoader.load('assets/textures/gatsby.jpg');
+
+                // Materials: Right, Left, Top, Bottom, Front, Back
+                const bookMats = [
+                    new THREE.MeshPhongMaterial({ color: 0xddddbb }), // Pages (Right)
+                    new THREE.MeshPhongMaterial({ color: 0x8b4513 }), // Spine (Left - wait, BoxGeometry mapping depends on orientation)
+                    new THREE.MeshPhongMaterial({ map: coverTex }),   // Top (Cover)
+                    new THREE.MeshPhongMaterial({ color: 0x8b4513 }), // Bottom (Back Cover)
+                    new THREE.MeshPhongMaterial({ color: 0x8b4513 }), // Front (Spine/Edge)
+                    new THREE.MeshPhongMaterial({ color: 0xddddbb })  // Back (Page Edge)
+                ];
+                // Actually: 
+                // 0: +x (Right), 1: -x (Left), 2: +y (Top), 3: -y (Bottom), 4: +z (Front), 5: -z (Back)
+                // Assuming book is flat on table.
+
+                const book = new THREE.Mesh(bookGeo, bookMats);
+                book.position.set(97, 11, 242);
+                this.scene.add(book);
+
+
                 console.log('House (physics colliders) loaded at:', houseX, houseZ);
             },
             undefined,
