@@ -4,6 +4,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { fetchBookContent } from '../utils/bookLoader.js';
 
 import { cityRandom } from '../utils/SeededRandom.js';
 import { SoundManager } from '../audio/SoundManager.js';
@@ -236,9 +237,24 @@ class Game {
         if (!this.houseBook) return;
         console.log('Opening Book...');
         this.houseBook.isOpen = true;
+
         const overlay = document.getElementById('reading-overlay');
+        const contentDiv = document.getElementById('book-content');
+
         if (overlay) overlay.style.display = 'flex';
         this.controls.unlock(); // Release mouse to read
+
+        // Lazy Load Content
+        if (!this.houseBook.contentLoaded) {
+            console.log('Fetching book content...');
+            fetchBookContent().then(text => {
+                this.houseBook.content = text;
+                this.houseBook.contentLoaded = true;
+                if (contentDiv) contentDiv.innerText = text;
+            }).catch(err => {
+                if (contentDiv) contentDiv.innerText = "Error loading book.\n" + err.message;
+            });
+        }
     }
 
     closeBook() {
